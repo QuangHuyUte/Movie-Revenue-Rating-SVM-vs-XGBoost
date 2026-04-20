@@ -1,0 +1,12 @@
+# Bỏ qua tất cả các file dữ liệu CSV và Excel
+*.csv
+*.xlsx
+
+# Bỏ qua thư mục rác sinh ra bởi Python
+__pycache__/
+*.pyc
+
+# Bỏ qua thư mục lưu trữ môi trường ảo (nếu có)
+venv/
+env/
+.env
