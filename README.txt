@@ -7,9 +7,9 @@
 
 <div align="center">
 
-[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg?style=for-the-badge&logo=python)](https://www.python.org/)  
-[![Streamlit](https://img.shields.io/badge/Streamlit-UI-FF4B4B.svg?style=for-the-badge&logo=streamlit)](https://streamlit.io/)  
-[![Scikit-Learn](https://img.shields.io/badge/Scikit--Learn-Machine%20Learning-F7931E.svg?style=for-the-badge&logo=scikitlearn)](https://scikit-learn.org/)  
+[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg?style=for-the-badge&logo=python)](https://www.python.org/) 
+[![Streamlit](https://img.shields.io/badge/Streamlit-UI-FF4B4B.svg?style=for-the-badge&logo=streamlit)](https://streamlit.io/) 
+[![Scikit-Learn](https://img.shields.io/badge/Scikit--Learn-Machine%20Learning-F7931E.svg?style=for-the-badge&logo=scikitlearn)](https://scikit-learn.org/) 
 [![XGBoost](https://img.shields.io/badge/XGBoost-Gradient%20Boosting-000000.svg?style=for-the-badge&logo=xgboost)](https://xgboost.readthedocs.io/)
 
 </div>
@@ -31,11 +31,9 @@
 
 ### A. Công thức Dự báo Lai (Hybrid Soft-Weighting)
 
-Dự báo cuối cùng:
-
-```math
+$$
 \hat{y} = \sum_{k=0}^{2} P(C_k | X) \cdot f_k(X)
-```
+$$
 
 **Trong đó:**
 - \(P(C_k | X)\): Xác suất phân tầng (Flop / Hit / Blockbuster) từ SVC  
@@ -47,34 +45,37 @@ Dự báo cuối cùng:
 
 **Log Transform:**
 
-```math
+$$
 y' = \ln(1 + y)
-```
+$$
 
 **Robust Scaling:**
 
-```math
+$$
 X' = \frac{X - \text{median}(X)}{\text{IQR}(X)}
-```
+$$
 
 ---
 
 ### C. Thước Đo Đánh giá
 
 **R² Score:**
-```math
+
+$$
 R^2 = 1 - \frac{\sum (y_i - \hat{y}_i)^2}{\sum (y_i - \bar{y})^2}
-```
+$$
 
 **MAE:**
-```math
+
+$$
 MAE = \frac{1}{n} \sum |y_i - \hat{y}_i|
-```
+$$
 
 **RMSE:**
-```math
+
+$$
 RMSE = \sqrt{\frac{1}{n} \sum (y_i - \hat{y}_i)^2}
-```
+$$
 
 ---
 
@@ -199,14 +200,14 @@ pip install pandas numpy scikit-learn xgboost matplotlib seaborn streamlit beaut
 
 Tải và đặt vào thư mục gốc:
 
-- TMDB:
-  - `tmdb_5000_movies.csv`
-  - `tmdb_5000_credits.csv`
+**TMDB Dataset:**
+- `tmdb_5000_movies.csv`
+- `tmdb_5000_credits.csv`
 
-- MovieLens:
-  - `genome-tags.csv`
-  - `genome-scores.csv`
-  - `links.csv`
+**MovieLens Genome:**
+- `genome-tags.csv`
+- `genome-scores.csv`
+- `links.csv`
 
 ---
 
