@@ -6,6 +6,7 @@ import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import RobustScaler, QuantileTransformer
 from sklearn.feature_selection import f_regression
+from sklearn.linear_model import LinearRegression
 
 def show_phase4():
     st.title("⚙️ Phase 4: Data Preprocessing & Transformation")
@@ -168,11 +169,13 @@ def show_phase4():
     # =================================================================
     st.markdown("---")
     if st.button("🗂️ Thực thi Transformation & Chia tập dữ liệu (Train/Test)"):
-        with st.status("Đang chạy Pipeline Tiền xử lý và Lọc Mã Gen...", expanded=True) as status:
+        with st.status("Đang chạy Pipeline Tiền xử lý, Lọc Mã Gen và Áp dụng F-Regression...", expanded=True) as status:
             try:
                 scores = pd.read_csv('genome-scores.csv')
                 tags = pd.read_csv('genome-tags.csv')
                 links = pd.read_csv('links.csv')
+                
+                total_raw_tags = len(tags['tag'].unique())
                 
                 if 'movieId' not in df_clean.columns:
                     df_mapped = pd.merge(df_clean, links[['movieId', 'tmdbId']], left_on='id', right_on='tmdbId', how='inner')
@@ -181,110 +184,168 @@ def show_phase4():
                 # ==============================================================
                 # 🛑 BỘ LỌC DATA LEAKAGE CẤP CAO BẰNG REGEX
                 # ==============================================================
-                # Sử dụng \b để giới hạn từ (tránh xóa nhầm chữ Mafia có chứa afi)
                 blacklist_regex = [
-                    r'\bafi\b', r'\boscar\b', r'\baward\b', r'\bbox office\b', r'\bflop\b',
-                    r'\bmasterpiece\b', r'\b007\b', r'top 10', r'\bimdb\b', r'rotten tomatoes',
-                    r'\bcriterion\b', r'cult classic', r'movielens'
+                    r'\bafi\b', r'\boscar\b', r'\baward\b', r'\bimdb\b', r'rotten tomatoes', 
+                    r'\bcriterion\b', r'movielens', r'\bbafta\b',
+                    r'\bbox office\b', r'\bflop\b', r'\bhit\b(?! m[ea]n)', r'\bgross\b(?!-out)', 
+                    r'\btop 10\b', r'\btop 250\b',
+                    r'\bmasterpiece\b', r'\bbest\b', r'\bworst\b', r'\bgreat\b', r'\bexcellent\b', 
+                    r'\bperfect\b', r'\bawful\b', r'\bhorrible\b', r'\bterrible\b', r'\bamazing\b',
+                    r'\bbrilliant\b', r'\bgenius\b', r'\bawesome\b', r'\boverrated\b', r'\bunderrated\b', 
+                    r'\bpredictable\b', r'\bboring\b', r'\bcliche\b', r'plot hole', r'\bentertaining\b', 
+                    r'\bdisappoint\w*', r'\bbad\b', r'(?<!feel[- ])\bgood\b(?! versus)', r'\bfunny\b', 
+                    r'\bstupid\b', r'\bdumb\b', r'\bcrap\b', r'so bad', r'not as good',
+                    r'\bclassic\b(?! car|al)', r'\bhighly\b', r'\bfavorite\b', r'\bessential\b'
                 ]
                 
                 valid_tags = tags[~tags['tag'].str.contains('|'.join(blacklist_regex), case=False, na=False, regex=True)]
+                dropped_by_regex = total_raw_tags - len(valid_tags)
                 
-                # Trích xuất Top 50 Tags nhưng chỉ từ danh sách SẠCH
-                top_tags_ids = scores[scores['tagId'].isin(valid_tags['tagId'])].groupby('tagId')['relevance'].mean().nlargest(50).index
-                
-                pivot_tags = scores[scores['tagId'].isin(top_tags_ids)].merge(tags, on='tagId').pivot(index='movieId', columns='tag', values='relevance').reset_index()
+                # BƯỚC 1: PIVOT TOÀN BỘ CÁC THẺ SẠCH 
+                pivot_tags = scores[scores['tagId'].isin(valid_tags['tagId'])].merge(tags, on='tagId').pivot(index='movieId', columns='tag', values='relevance').reset_index()
                 
                 df_fusion = pd.merge(df_mapped, pivot_tags, on='movieId', how='inner').fillna(0)
-                
-                # LƯU LẠI BẢNG GỐC ĐỂ VẼ BIỂU ĐỒ EDA
                 st.session_state.df_fusion_raw = df_fusion 
                 
-                # KHÓA CHẶT ĐẦU VÀO ĐỂ CHỐNG DATA LEAKAGE TỪ TƯƠNG LAI
                 meta_cols = ['budget', 'popularity', 'runtime', 'release_year', 'is_franchise', 'is_english', 'brand_power', 'director_power', 'cast_power']
                 tag_cols = [c for c in pivot_tags.columns if c != 'movieId']
-                X_fusion = df_fusion[meta_cols + tag_cols].values
-
-                current_year = 2026
-                movie_age = (current_year - df_fusion['release_year'].values).reshape(-1, 1)
-                X_combined = np.hstack([X_fusion, movie_age])
-                all_feature_names = meta_cols + tag_cols + ['movie_age']
-
+                
+                df_fusion['movie_age'] = 2026 - df_fusion['release_year']
+                
+                all_possible_features = meta_cols + tag_cols + ['movie_age']
+                X_full = df_fusion[all_possible_features].values
+                
                 y_rev_raw = df_fusion['revenue'].values
                 y_vote = df_fusion['vote_average'].values
                 budgets = df_fusion['budget'].values
 
                 y_rev_log = np.log1p(y_rev_raw)
+                
                 y_tier = np.zeros_like(y_rev_raw)
                 roi = y_rev_raw / (budgets + 1e-5)
                 y_tier[roi <= 1.5] = 0
                 y_tier[(roi > 1.5) & (roi <= 4)] = 1
                 y_tier[roi > 4] = 2
 
+                # BƯỚC 2: CHIA TẬP DATA NGAY LẬP TỨC 
                 indices = df_fusion['id'].values
                 
-                # CHIA TẬP DỮ LIỆU (80% Train, 20% Test)
-                (X_train, X_test, y_rev_train_log, y_rev_test_log, 
+                (X_train_full, X_test_full, y_rev_train_log, y_rev_test_log, 
                  y_vote_train, y_vote_test, y_tier_train, y_tier_test, train_idx, test_idx) = train_test_split(
-                    X_combined, y_rev_log, y_vote, y_tier, indices,
+                    X_full, y_rev_log, y_vote, y_tier, indices,
                     test_size=0.2, random_state=42, stratify=y_tier
                 )
                 
-                # LƯU KÍCH THƯỚC ĐỂ BÁO CÁO RA GIAO DIỆN
-                st.session_state.split_info = {'train_size': len(X_train), 'test_size': len(X_test)}
+                # BƯỚC 3: DÙNG F-REGRESSION CHẤM ĐIỂM TRÊN TẬP TRAIN VÀ CHỌN TOP 50
+                X_train_full_num = np.nan_to_num(X_train_full)
+                f_scores_full, _ = f_regression(X_train_full_num, y_rev_train_log)
+                f_scores_full = np.nan_to_num(f_scores_full)
+                
+                df_fscores = pd.DataFrame({'Feature': all_possible_features, 'F_Score': f_scores_full})
+                df_fscores = df_fscores.sort_values(by='F_Score', ascending=False)
+                
+                top_50_features = df_fscores.head(50)['Feature'].tolist()
+                top_50_indices = [all_possible_features.index(f) for f in top_50_features]
+                
+                dropped_by_fscore = len(all_possible_features) - 50
 
+                # BƯỚC 4: SLICE X_train VÀ X_test 
+                X_train_50 = X_train_full[:, top_50_indices]
+                X_test_50 = X_test_full[:, top_50_indices]
+
+                # BƯỚC 5: ROBUST SCALING
                 scaler_X = RobustScaler()
-                X_train_s = scaler_X.fit_transform(X_train)
-                X_test_s = scaler_X.transform(X_test)
+                X_train_s = scaler_X.fit_transform(X_train_50)
+                X_test_s = scaler_X.transform(X_test_50)
 
+                # BƯỚC 6: QUANTILE TRANSFORM (CHO DOANH THU)
                 scaler_y_rev = QuantileTransformer(output_distribution='normal', random_state=42)
                 y_train_rev_s = scaler_y_rev.fit_transform(y_rev_train_log.reshape(-1, 1)).flatten()
                 y_test_rev_s = scaler_y_rev.transform(y_rev_test_log.reshape(-1, 1)).flatten()
 
+                f_vote_top50, _ = f_regression(np.nan_to_num(X_train_s), y_vote_train)
+                f_vote_top50 = np.nan_to_num(f_vote_top50)
+
                 # ==============================================================
-                # TOÁN HỌC: TÍNH ĐỘ QUAN TRỌNG ĐẶC TRƯNG NGAY TRÊN TẬP TRAIN
+                # 🛑 BƯỚC 7: FIX LỖI MEMORY (C-CONTIGUOUS) TẬN GỐC CHO SVC / SVR
                 # ==============================================================
-                f_rev, _ = f_regression(X_train_s, y_train_rev_s)
-                f_vote, _ = f_regression(X_train_s, y_vote_train)
-                f_rev = np.nan_to_num(f_rev)
-                f_vote = np.nan_to_num(f_vote)
+                # Ép Python dọn dẹp RAM, nén thành các dải bộ nhớ liên tục (C-order)
+                X_train_s = np.ascontiguousarray(X_train_s)
+                X_test_s = np.ascontiguousarray(X_test_s)
+                
+                y_train_rev_s = np.ascontiguousarray(y_train_rev_s)
+                y_test_rev_s = np.ascontiguousarray(y_test_rev_s)
+                
+                y_vote_train = np.ascontiguousarray(y_vote_train)
+                y_vote_test = np.ascontiguousarray(y_vote_test)
+                
+                y_tier_train = np.ascontiguousarray(y_tier_train)
+                y_tier_test = np.ascontiguousarray(y_tier_test)
+
+                # ==============================================================
+                # LƯU KẾT QUẢ VÀO SESSION STATE
+                # ==============================================================
+                st.session_state.split_info = {
+                    'train_size': len(X_train_50), 
+                    'test_size': len(X_test_50),
+                    'total_initial': len(meta_cols) + total_raw_tags + 1,
+                    'dropped_regex': dropped_by_regex,
+                    'dropped_fscore': dropped_by_fscore,
+                    'kept_features': 50
+                }
+                
+                st.session_state.sim_data = {
+                    'df_fusion': df_fusion,
+                    'df_fscores': df_fscores,
+                    'all_features': all_possible_features
+                }
 
                 st.session_state.model_data = {
                     'y_train_rev_s': y_train_rev_s, 'y_vote_full': y_vote, 'y_tier_full': y_tier,
                     'X_train': X_train_s, 'X_test': X_test_s, 'y_rev_train': y_train_rev_s, 'y_rev_test': y_test_rev_s,
                     'y_vote_train': y_vote_train, 'y_vote_test': y_vote_test, 'y_tier_train': y_tier_train, 'y_tier_test': y_tier_test,
-                    'scaler_y_rev': scaler_y_rev, 'feature_names': all_feature_names,
-                    'f_rev': f_rev, 'f_vote': f_vote, # Dữ liệu vẽ biểu đồ đặc trưng
+                    'scaler_y_rev': scaler_y_rev, 'feature_names': top_50_features,
+                    'f_rev': df_fscores.head(50)['F_Score'].values, 'f_vote': f_vote_top50, 
                     'test_idx': test_idx  
                 }
-                status.update(label="✅ Tiền xử lý hoàn tất! Cấu trúc dữ liệu đã được bảo mật chống rò rỉ.", state="complete")
+                status.update(label="✅ Tiền xử lý hoàn tất! Cấu trúc dữ liệu đã được bảo mật chống rò rỉ và fix lỗi bộ nhớ.", state="complete")
             except Exception as e:
                 st.error(f"Lỗi hệ thống: {e}")
 
     # =================================================================
-    # BẢNG THÔNG BÁO TỈ LỆ CHIA TRAIN/TEST
+    # BẢNG THÔNG BÁO TỈ LỆ VÀ SÀNG LỌC ĐẶC TRƯNG
     # =================================================================
     if 'split_info' in st.session_state:
-        train_n = st.session_state.split_info['train_size']
-        test_n = st.session_state.split_info['test_size']
-        st.info(f"📊 **Kết quả Chia tập dữ liệu (Tỉ lệ 80/20)**\n\n"
-                f"- 📚 **Tập Huấn luyện (Train): `{train_n}` phim (80%)** - Dùng để truyền vào thuật toán dạy AI.\n"
-                f"- 🎯 **Tập Kiểm thử (Test): `{test_n}` phim (20%)** - Giữ kín hoàn toàn để chấm điểm công bằng ở Phase 6, 7.")
+        info = st.session_state.split_info
+        st.success(f"""
+        📊 **Kết quả Khởi tạo Không gian Toán học & Chia tập dữ liệu (80/20)**
+        
+        **1. Quá trình Vắt lọc Đặc trưng (Feature Selection):**
+        - Kích thước không gian đa chiều ban đầu: **{info['total_initial']:,}** đặc trưng *(Bao gồm Metadata + toàn bộ Genome Tags)*.
+        - Đã loại bỏ bằng Regex Blacklist (Chống rò rỉ kết quả): **{info['dropped_regex']:,}** thẻ rác/gian lận.
+        - Đã loại bỏ bằng Thuật toán F-Regression (Chống nhiễu số liệu): **{info['dropped_fscore']:,}** thẻ không liên quan.
+        - 👉 Số đặc trưng tinh hoa cuối cùng giữ lại để cho AI học: **{info['kept_features']}** đặc trưng cốt lõi.
+
+        **2. Chia Tập Dữ Liệu:**
+        - 📚 **Tập Huấn luyện (Train): `{info['train_size']:,}` phim (80%)** - Dùng để truyền vào thuật toán dạy AI.
+        - 🎯 **Tập Kiểm thử (Test): `{info['test_size']:,}` phim (20%)** - Giữ kín hoàn toàn để chấm điểm công bằng ở Phase 6.
+        """)
 
     # =================================================================
-    # 4. TÁI KHÁM (AFTER) - THÊM TAB TOP 15 ĐẶC TRƯNG TẠI ĐÂY
+    # 4. TÁI KHÁM (AFTER) - CÁC TAB KẾT QUẢ
     # =================================================================
     if 'model_data' in st.session_state:
         st.markdown("---")
         st.subheader("3. Tái khám: Kết quả sau chuẩn hóa (Trị dứt điểm Outliers)")
         data = st.session_state.model_data
         
-        tab_after_y, tab_after_x, tab_tier, tab_vote, tab_features = st.tabs([
+        tab_after_y, tab_after_x, tab_tier, tab_vote, tab_features, tab_sim = st.tabs([
             "✨ Mục tiêu Doanh thu (Y)", 
             "🛡️ Đặc trưng Đầu vào (X)", 
             "📊 Phân tầng ROI", 
             "⭐ Điểm số Vote",
-            "🏆 Top 15 Đặc trưng (Đã Lọc)"
+            "🏆 Top 15 Đặc trưng (Đã Lọc)",
+            "🔬 Tái Khám Phá (Mô phỏng)"
         ])
 
         with tab_after_y:
@@ -303,19 +364,20 @@ def show_phase4():
 
         with tab_after_x:
             st.success("✅ **Sự lột xác của Budget & Popularity (X) sau khi đi qua màng lọc RobustScaler**")
-            idx_budget = data['feature_names'].index('budget')
-            idx_pop = data['feature_names'].index('popularity')
-            X_train_s = data['X_train']
-            
-            df_x_scaled = pd.DataFrame({
-                'Budget (Đã nén)': X_train_s[:, idx_budget],
-                'Popularity (Đã nén)': X_train_s[:, idx_pop]
-            })
-            
-            fig_x_after, ax_x_after = plt.subplots(figsize=(10, 4))
-            sns.boxplot(data=df_x_scaled, orient='h', palette='Blues', flierprops={'marker': 'o', 'markerfacecolor': '#e74c3c', 'markersize': 5}, ax=ax_x_after)
-            ax_x_after.set_title("BOX PLOT: Budget & Popularity (Sau Robust Scaling)", fontweight='bold')
-            st.pyplot(fig_x_after)
+            cols_to_plot = {}
+            if 'budget' in data['feature_names']:
+                cols_to_plot['Budget (Đã nén)'] = data['X_train'][:, data['feature_names'].index('budget')]
+            if 'popularity' in data['feature_names']:
+                cols_to_plot['Popularity (Đã nén)'] = data['X_train'][:, data['feature_names'].index('popularity')]
+                
+            if cols_to_plot:
+                df_x_scaled = pd.DataFrame(cols_to_plot)
+                fig_x_after, ax_x_after = plt.subplots(figsize=(10, 4))
+                sns.boxplot(data=df_x_scaled, orient='h', palette='Blues', flierprops={'marker': 'o', 'markerfacecolor': '#e74c3c', 'markersize': 5}, ax=ax_x_after)
+                ax_x_after.set_title("BOX PLOT: Các biến đầu vào (Sau Robust Scaling)", fontweight='bold')
+                st.pyplot(fig_x_after)
+            else:
+                st.info("Budget và Popularity không được F-Regression chọn vào top nên không hiển thị.")
 
         with tab_tier:
             c1, c2 = st.columns([1.5, 1])
@@ -344,29 +406,21 @@ def show_phase4():
             with c2:
                 st.success("💡 **Không cần biến đổi (No Transform)**\n\nĐiểm số Vote tự nhiên đã phân bổ rất cân xứng (mốc 6.0 - 7.0). Ta đưa thẳng biến này vào AI Hồi quy mà không sợ nhiễu.")
 
-        # =====================================================================
-        # TÍNH NĂNG MỚI: BIỂU ĐỒ TOP 15 SẠCH LEAKAGE TRÊN TẬP TRAIN
-        # =====================================================================
         with tab_features:
             st.success("✅ **Sức mạnh Đặc trưng (F-Regression) trên Tập Huấn Luyện Sạch**")
-            st.markdown("""
-            Biểu đồ này minh chứng cho sự minh bạch của hệ thống: Các thẻ mang tính gian lận và thông tin tương lai như **Oscar, AFI, IMDB, Box Office, Masterpiece...** đã bị Bộ lọc Regex chặn đứng hoàn toàn. AI giờ đây buộc phải dùng tư duy để dự đoán dựa trên các **Mã gen Cảm xúc cốt lõi** thực sự của kịch bản!
-            """)
+            st.markdown("""Biểu đồ này minh chứng cho sự minh bạch của hệ thống: Các thẻ mang tính gian lận và thông tin tương lai như **Oscar, AFI, IMDB, Box Office...** đã bị Bộ lọc Regex chặn đứng hoàn toàn. AI giờ đây buộc phải dùng tư duy để dự đoán dựa trên các **Mã gen Cảm xúc cốt lõi** thực sự của kịch bản!""")
             
             features = data['feature_names']
-            
             df_rev = pd.DataFrame({'Feature': features, 'Score': data['f_rev']}).sort_values('Score', ascending=False).head(15)
             df_vote = pd.DataFrame({'Feature': features, 'Score': data['f_vote']}).sort_values('Score', ascending=False).head(15)
             
             fig_fi, axes = plt.subplots(1, 2, figsize=(15, 6))
             
-            # Biểu đồ Doanh Thu
             sns.barplot(ax=axes[0], x='Score', y='Feature', data=df_rev, palette='mako')
             axes[0].set_title('TOP 15 ĐẶC TRƯNG - DOANH THU', fontweight='bold', fontsize=12)
             axes[0].set_xlabel('Mức độ ảnh hưởng (F-Score)')
             axes[0].set_ylabel('')
             
-            # Biểu đồ Điểm Số
             sns.barplot(ax=axes[1], x='Score', y='Feature', data=df_vote, palette='flare')
             axes[1].set_title('TOP 15 ĐẶC TRƯNG - ĐIỂM SỐ', fontweight='bold', fontsize=12)
             axes[1].set_xlabel('Mức độ ảnh hưởng (F-Score)')
@@ -374,3 +428,68 @@ def show_phase4():
             
             plt.tight_layout()
             st.pyplot(fig_fi)
+
+        # =====================================================================
+        # TAB 6: MÔ PHỎNG ĐẶC TRƯNG TỐT VS RÁC
+        # =====================================================================
+        with tab_sim:
+            st.info("🔬 **Tái Khám Phá: Mô phỏng Đặc trưng Quan trọng vs Đặc trưng Rác**\n\nKiểm chứng tại sao hệ thống Toán học lại chọn (hoặc vứt bỏ) một đặc trưng. Hãy kéo thanh trượt để tự mình kiểm chứng lý thuyết tương quan!")
+            
+            sim_data = st.session_state.sim_data
+            df_f = sim_data['df_fscores']
+            df_full = sim_data['df_fusion']
+            
+            col_sim1, col_sim2 = st.columns(2)
+            with col_sim1:
+                target_sim = st.selectbox("🎯 Chọn Mục tiêu kiểm chứng:", ["Doanh thu (Revenue)", "Điểm số (Vote)"])
+            with col_sim2:
+                feat_group = st.radio("📂 Nhóm Đặc trưng:", ["🔥 Top Quan trọng nhất (Được giữ lại)", "🗑️ Đặc trưng Rác (Bị F-Regression loại)"])
+                
+            if feat_group.startswith("🔥"):
+                feat_list = df_f.head(20)['Feature'].tolist()
+            else:
+                feat_list = df_f.tail(100)['Feature'].tolist()
+                
+            selected_feat = st.selectbox("🔍 Chọn đặc trưng để mô phỏng sự biến thiên:", feat_list)
+            
+            X_sim = df_full[selected_feat].values.reshape(-1, 1)
+            y_sim = df_full['revenue'].values if target_sim == "Doanh thu (Revenue)" else df_full['vote_average'].values
+            
+            lr = LinearRegression()
+            lr.fit(X_sim, y_sim)
+            
+            min_val = float(X_sim.min())
+            max_val = float(X_sim.max())
+            step_val = (max_val - min_val) / 100 if max_val > min_val else 0.1
+            
+            if min_val == max_val:
+                st.warning("⚠️ Đặc trưng này có giá trị không đổi (Constant) trong toàn bộ bộ dữ liệu. Không thể mô phỏng toán học.")
+            else:
+                sim_val = st.slider(f"🎚️ Kéo để thay đổi tham số của '{selected_feat}':", min_value=min_val, max_value=max_val, value=min_val + (max_val - min_val)/2, step=step_val)
+                pred_y = lr.predict([[sim_val]])[0]
+                
+                fig_sim, ax_sim = plt.subplots(figsize=(10, 5))
+                
+                sample_idx = np.random.choice(len(X_sim), min(1000, len(X_sim)), replace=False)
+                ax_sim.scatter(X_sim[sample_idx], y_sim[sample_idx], color='#bdc3c7', alpha=0.5, label='Dữ liệu thực tế')
+                
+                x_trend = np.array([min_val, max_val]).reshape(-1, 1)
+                y_trend = lr.predict(x_trend)
+                ax_sim.plot(x_trend, y_trend, color='#e74c3c', linewidth=3, label='Đường xu hướng (F-Regression)')
+                
+                ax_sim.plot([sim_val], [pred_y], marker='*', color='#f1c40f', markersize=20, markeredgecolor='black', label='Điểm mô phỏng')
+                
+                ax_sim.set_xlabel(selected_feat.upper(), fontweight='bold')
+                ax_sim.set_ylabel(target_sim, fontweight='bold')
+                ax_sim.legend()
+                st.pyplot(fig_sim)
+                
+                if target_sim == "Doanh thu (Revenue)":
+                    st.success(f"💡 **Toán học dự báo:** Khi **{selected_feat}** tăng đạt mức {sim_val:,.2f}, hệ thống kỳ vọng Doanh thu dịch chuyển chạm mốc **${pred_y:,.0f}**.")
+                else:
+                    st.success(f"💡 **Toán học dự báo:** Khi **{selected_feat}** tăng đạt mức {sim_val:,.2f}, hệ thống kỳ vọng Điểm số dịch chuyển chạm mốc **{pred_y:.2f} / 10**.")
+                    
+                if feat_group.startswith("🗑️"):
+                    st.markdown("> *Hãy quan sát đường xu hướng màu đỏ, nó gần như **nằm ngang**. Dù bạn có kéo thanh trượt mỏi tay, việc tăng hay giảm biến này không hề làm mục tiêu biến động. Đó là lý do F-Regression thẳng tay vứt bỏ nó để tiết kiệm tài nguyên hệ thống.*")
+                else:
+                    st.markdown("> *Đường xu hướng dốc lên/dốc xuống cực kỳ mạnh mẽ! Chỉ cần một sự biến thiên nhỏ của tham số này cũng làm thay đổi mục tiêu rõ rệt. Đó là lý do AI xếp nó vào hàng tinh hoa để học hỏi.*")

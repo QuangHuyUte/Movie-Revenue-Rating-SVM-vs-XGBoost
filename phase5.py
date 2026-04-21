@@ -18,12 +18,24 @@ def show_phase5():
         return
 
     data = st.session_state.model_data
-    X_train_s, X_test_s = data['X_train'], data['X_test']
-    y_tier_train, y_tier_test = data['y_tier_train'], data['y_tier_test']
-    y_train_rev_s, y_test_rev_s = data['y_rev_train'], data['y_rev_test']
-    y_vote_train, y_vote_test = data['y_vote_train'], data['y_vote_test']
-    scaler_y_rev = data['scaler_y_rev']
     
+    # =====================================================================
+    # 🛑 FIX LỖI C-CONTIGUOUS TẦNG 1: ÉP KHỐI DỮ LIỆU ĐẦU VÀO
+    # =====================================================================
+    X_train_s = np.ascontiguousarray(data['X_train'], dtype=np.float64)
+    X_test_s = np.ascontiguousarray(data['X_test'], dtype=np.float64)
+    
+    # Classification targets nên để int32 cho an toàn
+    y_tier_train = np.ascontiguousarray(data['y_tier_train'], dtype=np.int32)
+    y_tier_test = np.ascontiguousarray(data['y_tier_test'], dtype=np.int32)
+    
+    y_train_rev_s = np.ascontiguousarray(data['y_rev_train'], dtype=np.float64)
+    y_test_rev_s = np.ascontiguousarray(data['y_rev_test'], dtype=np.float64)
+    y_vote_train = np.ascontiguousarray(data['y_vote_train'], dtype=np.float64)
+    y_vote_test = np.ascontiguousarray(data['y_vote_test'], dtype=np.float64)
+    scaler_y_rev = data['scaler_y_rev']
+    # =====================================================================
+
     feature_names = data.get('feature_names', [f"Feature {i}" for i in range(X_train_s.shape[1])])
 
     tab_rev, tab_vote = st.tabs(["💰 Bài toán 1: Doanh Thu (Hybrid vs Standalone)", "⭐ Bài toán 2: Điểm Số (SVR vs XGBoost vs Linear)"])
@@ -101,7 +113,12 @@ def show_phase5():
                     # 3. XỬ LÝ MÔ HÌNH LAI (HYBRID)
                     else:
                         for t in [0, 1, 2]:
-                            weights = train_probs[:, t]
+                            # =====================================================================
+                            # 🛑 FIX LỖI C-CONTIGUOUS TẦNG 2 (SVR SAMPLE_WEIGHT CRASH)
+                            # Slice array làm vỡ RAM, phải đóng gói lại bằng np.ascontiguousarray
+                            # =====================================================================
+                            weights = np.ascontiguousarray(train_probs[:, t], dtype=np.float64)
+                            
                             if "XGBoost" in rev_model_choice: 
                                 reg = XGBRegressor(n_estimators=reg_param1, learning_rate=reg_param2, max_depth=6, random_state=42)
                             elif "SVR" in rev_model_choice: 
@@ -117,7 +134,9 @@ def show_phase5():
                     y_test_pred_s = np.zeros(len(X_test_s))
                     
                     for i in range(len(X_test_s)):
-                        expert_preds = [rev_experts[t].predict([X_test_s[i]])[0] for t in [0, 1, 2]]
+                        # FIX LỖI TẦNG 3: Ép mảng 1D sang khối 2D liền mạch để predict không bị văng
+                        x_i = np.ascontiguousarray(X_test_s[i].reshape(1, -1))
+                        expert_preds = [rev_experts[t].predict(x_i)[0] for t in [0, 1, 2]]
                         y_test_pred_s[i] = np.sum(y_probs[i] * np.array(expert_preds))
 
                     # Giải mã
@@ -150,7 +169,9 @@ def show_phase5():
                 with col_c1:
                     fig_svc, ax_svc = plt.subplots(figsize=(7, 5))
                     pca_2d = PCA(n_components=2)
-                    X_test_pca = pca_2d.fit_transform(X_test_s)
+                    
+                    # FIX LỖI TẦNG 4: PCA Fit
+                    X_test_pca = np.ascontiguousarray(pca_2d.fit_transform(X_test_s))
                     svc_2d = SVC(kernel='rbf', C=svc_c if "SVC" in rev_model_choice else 1.0, class_weight='balanced').fit(X_test_pca, y_tier_test)
                     x_min, x_max = X_test_pca[:, 0].min() - 1, X_test_pca[:, 0].max() + 1
                     y_min, y_max = X_test_pca[:, 1].min() - 1, X_test_pca[:, 1].max() + 1
@@ -229,7 +250,9 @@ def show_phase5():
                                         fig_lr, ax_lr = plt.subplots(figsize=(7, 4.5))
                                         idx_test = (y_tier_test == idx_tier)
                                         if idx_test.sum() > 0:
-                                            y_pred_z = expert.predict(X_test_s[idx_test])
+                                            # FIX LỖI TẦNG 5: Ép mảng vẽ biểu đồ
+                                            X_tier_test = np.ascontiguousarray(X_test_s[idx_test])
+                                            y_pred_z = expert.predict(X_tier_test)
                                             residuals = y_test_rev_s[idx_test] - y_pred_z
                                             
                                             if "SVR" in pipeline:
@@ -369,3 +392,6 @@ def show_phase5():
                     ax_res.set_xlabel('Điểm số AI Dự đoán')
                     ax_res.set_ylabel('Sai số Thực tế')
                     st.pyplot(fig_res)
+
+if __name__ == "__main__":
+    show_phase5()
