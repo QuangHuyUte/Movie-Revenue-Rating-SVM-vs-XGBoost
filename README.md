@@ -20,7 +20,7 @@
 
 ## 🎓 0. Thông Tin Đồ Án & Đội Ngũ
 
-- **Đơn vị:** Đại học Sư phạm Kỹ thuật TP.HCM (**HCMUTE**) - Khoa Đào tạo Chất lượng cao.
+- **Đơn vị:** Đại học Sư phạm Kỹ thuật TP.HCM (**HCMUTE**) - Khoa Đào tạo Tien tien.
 - **Giảng viên hướng dẫn:** Thầy **Bùi Mạnh Quân** - Chuyên gia trong lĩnh vực AI.
 - **Nhóm sinh viên thực hiện:** 1. **Bùi Quang Huy** (Lớp AI - HCMUTE)
   2. **Nguyễn Tài Huy** (Lớp AI - HCMUTE)
