@@ -21,7 +21,7 @@
 ## 🎓 0. Thông Tin Đồ Án & Đội Ngũ
 
 - **Đơn vị:** Đại học Sư phạm Kỹ thuật TP.HCM (**HCMUTE**) - Khoa Đào tạo Chất lượng cao.
-- **Giảng viên hướng dẫn:** Thầy **Bùi Mạnh Quân** - Chuyên gia trong lĩnh vực Phân tích dữ liệu & Machine Learning.
+- **Giảng viên hướng dẫn:** Thầy **Bùi Mạnh Quân** - Chuyên gia trong lĩnh vực AI.
 - **Nhóm sinh viên thực hiện:** 1. **Bùi Quang Huy** (Lớp AI - HCMUTE)
   2. **Nguyễn Tài Huy** (Lớp AI - HCMUTE)
 - **Mục tiêu dự án:** Xây dựng một framework dự báo thông minh giúp các nhà sản xuất phim đánh giá rủi ro tài chính và chất lượng nghệ thuật (điểm IMDB) trước khi dự án ra mắt dựa trên dữ liệu lịch sử và metadata của phim.
